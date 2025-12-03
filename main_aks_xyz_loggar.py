@@ -100,7 +100,7 @@ def datakoe_handterer():
     start_sjekk=True
     while not raakode_gui_metoder.stopp_trigger.is_set():
         datakoe_lokal = list(datakoe.get())
-        print_bytes(datakoe_lokal)
+        #print_bytes(datakoe_lokal)
         if kommando_status.start_event.is_set():
             # Sjekker hvor mange skritt samplenr. inkrementeres med
             if start_sjekk:

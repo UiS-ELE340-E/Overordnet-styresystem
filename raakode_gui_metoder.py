@@ -46,7 +46,7 @@ def sensor_loop(): #Funksjon som setter inn måleverdien fra sensor og rullerer 
 # ---------------------------------------------------------------
 
 serieport = serial.Serial(
-    port='COM13',
+    port='COM5',
     baudrate=115200,
     bytesize=serial.EIGHTBITS,   # 8 data bits
     parity=serial.PARITY_NONE,   # No parity
@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
         kommando_status.stopp_event.set()
         stopp_trigger.set()
         self.timer.stop()
-        QApplication.quit()
+        #QApplication.quit()
 
     def update_plot(self):
         self.line.set_ydata(sensor_data["avstand"])
