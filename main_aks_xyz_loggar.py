@@ -17,6 +17,7 @@ import time
 import numpy as np
 import serial
 import matplotlib.pyplot as mpl
+import csv
 #from matplotlib.animation import FuncAnimation
 
 # Importerer GUI oppsett
@@ -30,344 +31,282 @@ import kommando_status
 #x_data = []
 #y_data = []
 #line, =ax.plot([],[],'b-')
-#datakoe_x=queue.Queue()
-#stopp_kommando=0
+
+datakoe=queue.Queue()
+
+
+def print_bytes(data):
+    print([f"{b:02X}" for b in data])
 
 
 
-#def init():
-#    ax.relim()
-#    ax.autoscale_view()
-#    return line,
-#
-#def update(frame):
-#    while not datakoe_x.empty():
-#        y=datakoe_x.get()
-#        x_data.append(time.time())
-#        y_data.append(y)
-#    if len(x_data)>100:
-#        x_data.pop(0)
-#        y_data.pop(0)
-#    if x_data:
-#        line.set_data(x_data, y_data)
-#        ax.relim()
-#        ax.autoscale_view()
-#    if stopp_kommando == 's':
-#        ani.event_source.stop()
-#    return line,
-
-
-
-# --------------------------------------------------------------------------
-# Metode for aa gi ut int-verdien til eit hexadesimalt teikn i ASCII-format
-# --------------------------------------------------------------------------
-def hexascii2int(hex_teikn):
-    if '0' <= hex_teikn <= '9':
-        return (int(ord(hex_teikn) - 48))  # ASCII-koden for '0' er 0x30 = 48
-    elif 'A' <= hex_teikn <= 'F':
-        return (int(ord(hex_teikn) - 55))  # ASCII-koden for 'A' er 0x41 = 65
-
-#-------------------------------------------------------------------------
-# Kode for ein traad som les serieporten konfigurert i hovudtraaden main.
-# Lesinga startar naar traaden faar ein 'k'(koeyr) via ein kommandokoe og
-# stansar naar traaden faar ein 's' og etterpaa les meldingshalen ETX.
-# Alle mottatte teikn blir lagt inn i ei meldingsliste.
-# Serieporten blir stengt til slutt.
-#-------------------------------------------------------------------------
-def seriekomm(serieport, kommando_koe, meldingar):  # Innhald i traaden
-    try:
-        ny_kommando = kommando_koe.get()  # Vil henga til han faar foerste kommandoen
-    except Exception:
-        pass  # Ignorer, men kvitter ut evt. unntak som oppstaar.
-
-    tilstand = ny_kommando
-    tidteller=0
-    hextall=[]
-#    x_verdi=[]
-    verdi=0
-#    mpl.ion()
-#    fig, ax = mpl.subplots()
-#    line, = ax.plot([], [], 'b-')  # create an empty line
-#    x_data, y_data = [], []
-#    start_time = time.time()
-
-
-    while tilstand == 'k':  # Saa lenge ein vil k(oeyra logging)
-
-        #		while serieport.inWaiting() > 0:
-        teikn = str(serieport.read(1), encoding='utf-8')  # Les eitt teikn.  #KT La til convert til str
-                                                          # Vil blokkera/henga til det er kome noko aa lesa
-        meldingar.append(teikn)
-        if teikn == 'X':
-            tidteller=4
-        if tidteller>0:
-            tidteller=tidteller-1
-            
-            if teikn != 'X':
-                hextall.append(teikn)
-            if len(hextall)==3:
-                verdi=256*hexascii2int(hextall[0])+16*hexascii2int(hextall[1])+hexascii2int(hextall[2])
-                if verdi >= 32768:
-                    
-                    kommando_status.maaleverdi = verdi-65536
-                    print(kommando_status.maaleverdi)
-                else:
-                    
-                    kommando_status.maaleverdi = verdi
-                    print(kommando_status.maaleverdi)
-
-    
-#                datakoe_x.put(verdi)
-#                t=time.time()-start_time
-#                x_data.append(t)
-#                y_data.append(verdi)
-#                line.set_xdata(x_data)
-#                line.set_ydata(y_data)
-#                ax.relim()
-#                ax.autoscale_view()
-#                #mpl.draw()
-#                FuncAnimation()
-                
-                hextall=[]
-                
-
-
+def seriekomm_egen():
+    frame_errors = 0
+    while not raakode_gui_metoder.stopp_trigger.is_set():
+        # If port is closed or None, stop the loop
+        sp = getattr(raakode_gui_metoder, "serieport", None)
+        if sp is None or not getattr(sp, "is_open", False):
+            time.sleep(0.05)
+            continue
 
         try:
-            ny_kommando = kommando_koe.get(block=False)  # Her skal ein ikkje henga/blokkera
-        except Exception:  # men bare sjekka om det er kome ny kommando
-            pass  # Her faar ein eit"Empty"-unntak kvar gong ein les ein tom koe. Dette skal
-        # ignorerast, men kvitterast ut.
+            data = sp.read(21)
+        except (serial.SerialException, OSError, AttributeError) as e:
+            print("Serial read aborted:", e)
+            break
 
-        if ny_kommando == 's':
-            tilstand = ny_kommando  # Stans logging men fullfoer lesing t.o.m meldingshalen ETX
+        if len(data) == 21 and data[0] == 0xFF and data[20] == 0xF0:
+            datakoe.put(data)
+        else:
+            print('Frame error')
+            frame_errors += 1
 
-    while teikn != '\x03':  # Heilt til og med meldingshalen ETX
-        #		while serieport.inWaiting() > 0:
-        teikn = str(serieport.read(1), encoding='utf-8')  # Les eitt teikn. #KT La til convert til str
-        meldingar.append(teikn)
+        if frame_errors > 5:
+            try:
+                seriekomm_resynkroniserar()
+            except Exception as e:
+                print("Resync failed:", e)
+                break
+            frame_errors = 0
 
-    serieport.close()  # Steng ned
-    print(serieport.name, 'er stengt')
+        time.sleep(0.01)
 
 
-#-------------------------------------------------------------------------------------
-# Hovudtraad (main).
-# Denne opnar loggefil, kommandokoe, serieport og startar serietraaden.
-# Saa vil traaden venta paa koeyr-kommando fraa tastaturet. Han vil saa gi melding via
-# ein brukarkommandokoe til serietraaden om aa starta logging og til mikrokontrolleren
-# om aa starta maalingane og sending av filtrerte X-, Y-, Z-data med tidsreferanse.
-# Saa vil han venta paa stoppkommando fraa tastaturet. Etter aa ha faatt denne vil han
-# gi melding til serietraaden og saa mikrokontrolleren om aa stoppa. Serietraaden vil
-# daa halda fram til han les meldingshalen ETX.
+def seriekomm_resynkroniserar():
+    sp = getattr(raakode_gui_metoder, "serieport", None)
+    if sp is None or not getattr(sp, "is_open", False):
+        raise RuntimeError("Serial port not open for resynchronization")
 
-# Serietraaden vil skriva ut heile meldinga og vil saa laga raae (dvs. uskalerte) tids-
-# og akselerasjonslister som blir skrivne ut.
-# Saa blir det laga skalerte lister samt lister for absolutt akselerasjon samt stamp-
-# og rullvinkel. Alt dette blir saa plotta til slutt.
-#-------------------------------------------------------------------------------------
-def main():
-    kommando = '0'
-    fileName = 'logg.txt'
-    f = open(fileName, 'r+')
+    while True:
+        try:
+            bitsjekker = sp.read(1)
+        except (serial.SerialException, OSError, AttributeError) as e:
+            print("Serial read aborted during resync:", e)
+            raise
 
-    uC_meldingar = []
-    brukarkommandoar = queue.Queue()
-
-    connected = True
-    port = 'COM4'
-    baud = 115200  # 9600
-
-    serieport = serial.Serial(port, baud, timeout=1)
-
-    if serieport.isOpen():
-        print(serieport.name, 'er open')
+        if bitsjekker == b'\xFF':
+            break
+    resterande_beskjed = sp.read(20)
+    ramme = (bitsjekker or b"") + (resterande_beskjed or b"")
+    if len(ramme) == 21 and ramme[-1] == 0xF0:
+        print('Jadda, fikk til resynkronisering!')
+        datakoe.put(ramme)
+        return ramme
     else:
-        serieport.open()
+        print('Tror vi prøver en gang til....')
+        return seriekomm_resynkroniserar()
 
-    serie_traad = threading.Thread(target=seriekomm, args=(serieport, brukarkommandoar, uC_meldingar))
-    serie_traad.start()
+def datakoe_handterer():
+    start_sjekk=True
+    while not raakode_gui_metoder.stopp_trigger.is_set():
+        datakoe_lokal = list(datakoe.get())
+        print_bytes(datakoe_lokal)
+        if kommando_status.start_event.is_set():
+            # Sjekker hvor mange skritt samplenr. inkrementeres med
+            if start_sjekk:
+                sample=1
+                sample_skritt=0
 
-    print('Loggaren er klar')
+                start_sjekk=False       
+            elif datakoe_lokal[1]>sample_prev:
+                sample_skritt = datakoe_lokal[1]-sample_prev
+            elif datakoe_lokal[1]==0:
+                sample_skritt=256-sample_prev
+            elif datakoe_lokal[1]<sample_prev:
+                sample_skritt=datakoe_lokal[1]+256-datakoe_lokal[1]
+            sample=sample+sample_skritt
+            print(sample)
+            print(datakoe_lokal[1])
+            print(sample_skritt)
 
-#    while kommando != 'k':
-#        kommando = input('Gi kommando(k-koeyr logging, s-stopp logging):\n')  # Loepande lesing, dvs. vil staa her
-    # til det kjem noko inn fraa tastaturet.
-    while not kommando_status.start_event.is_set():
-        time.sleep(0.1)
+            sample_prev=datakoe_lokal[1]
+            datakoe_lokal[1]=sample
 
-    kommando='k'
-    print('Startar logging')
-    brukarkommandoar.put(kommando)  # Gi melding til serietraaden om aa starta sjekking av port
-    serieport.write('k'.encode('utf-8'))  # Gi melding til uC-en om aa koeyra i gong # KT la til encoding
+            # Omgjøring av innkommende verdier
+            avstand_raa = (datakoe_lokal[3]<<8)|datakoe_lokal[2]
+            kommando_status.avstand = avstand_raa if avstand_raa < 2000 else kommando_status.avstand
+            kommando_status.x_aks = (datakoe_lokal[5]<<8)|datakoe_lokal[4]
+            kommando_status.y_aks = (datakoe_lokal[7]<<8)|datakoe_lokal[6]
+            kommando_status.z_aks = (datakoe_lokal[9]<<8)|datakoe_lokal[8]
+            #kommando_status.error = int(kommando_status.avstand)-int(kommando_status.Ref_ny)
+            error_raa = (datakoe_lokal[11] << 8) | datakoe_lokal[10]
+            # interpret as signed int16 and keep only plausible values
+            error_raa = (error_raa - 0x10000) if (error_raa & 0x8000) else error_raa
+            kommando_status.error = error_raa if -2000 <= error_raa <= 2000 else kommando_status.error
+            kommando_status.power = (datakoe_lokal[13]<<8)|datakoe_lokal[12]
+            kommando_status.uP = (datakoe_lokal[15]<<8)|datakoe_lokal[14]
+            kommando_status.uI = (datakoe_lokal[17]<<8)|datakoe_lokal[16]
+            kommando_status.uD = (datakoe_lokal[19]<<8)|datakoe_lokal[18]
+            datakoe_lokal_hex =  " ".join(f"{b:02X}" for b in datakoe_lokal)
 
-#    while kommando != 's':
-#        kommando = input('Gi kommando:\n')  # Loepande lesing, dvs. staar her
-
-    while not kommando_status.stopp_event.is_set():
-        time.sleep(0.1)
-
-    stopp_kommando='s'
-    brukarkommandoar.put(kommando)  # Gi melding til serietraaden om aa stoppa, men fullfoera logging tom. ETX
-    time.sleep(1)  # Sikra at traaden faar med seg slutten paa meldinga
-    serieport.write('s'.encode('utf-8'))  # Gi melding til uC-en om aa stoppa sending av nye data #KT La til encoding
-    print('Stoppar logging')
-
-    # serieport.close()     # Det er naa kome kommando om aa stoppa logginga
-    # print '%s %s'  %(serieport.name, 'er stengt')
-
-    print(uC_meldingar)
-
-    f.write(str(uC_meldingar))
-    f.close()
-
- # Lag lister av raadata.
-    tid_raa = []
-    a_x_raa = []
-    a_y_raa = []
-    a_z_raa = []
-
-    for i in range(0, len(uC_meldingar)):
-        if uC_meldingar[i] == 'T':
-            kommando_status.tid_raa.append(16 * hexascii2int(uC_meldingar[i + 1]) + hexascii2int(uC_meldingar[i + 2]))
-
-        elif uC_meldingar[i] == 'X':
-            #Fiks slik at ein faar fram negative tal.
-            a_x_raa.append(
-                4096 * hexascii2int(uC_meldingar[i + 1]) + 256 * hexascii2int(uC_meldingar[i + 2]) + 16 * hexascii2int(
-                    uC_meldingar[i + 3]) + hexascii2int(uC_meldingar[i + 4]))
-        elif uC_meldingar[i] == 'Y':
-            #Fiks slik at ein faar fram negative tal.
-            a_y_raa.append(
-                4096 * hexascii2int(uC_meldingar[i + 1]) + 256 * hexascii2int(uC_meldingar[i + 2]) + 16 * hexascii2int(
-                    uC_meldingar[i + 3]) + hexascii2int(uC_meldingar[i + 4]))
-        elif uC_meldingar[i] == 'Z':
-            #Fiks slik at ein faar fram negative tal.
-            a_z_raa.append(
-                4096 * hexascii2int(uC_meldingar[i + 1]) + 256 * hexascii2int(uC_meldingar[i + 2]) + 16 * hexascii2int(
-                    uC_meldingar[i + 3]) + hexascii2int(uC_meldingar[i + 4]))
+            #log_line = (
+            #    f"{sample} | "
+            #    f"{kommando_status.avstand} | {kommando_status.x_aks} | {kommando_status.y_aks} | {kommando_status.z_aks} | {kommando_status.error} | "
+            #    f"{kommando_status.power} | {kommando_status.uP} | {kommando_status.uI} | {kommando_status.uD}\n"
+            #)
 
 
- # Lag skalerte lister og rekna ut tilleggsvariablar.
-    a_x = []
-    a_y = []
-    a_z = []
-    aks_abs = []  # sqrt(ax**2 + ay**2 + az**2)
-    ayz_abs = []
-    rull = []     # rullvinkel psi i grader (om x-aksen)
-    stamp = []    # stampvinkel theta i grader (om y-aksen)
+            #f.write(log_line)
 
-    for i in range(0, len(a_x_raa)):
-        if a_x_raa[i] >= 32768:
-            kommando_status.a_x.append((float(a_x_raa[i])-65536.0)/1000.0) # 1mg pr. LSb iflg. databladet.
-        else:
-            kommando_status.a_x.append(float(a_x_raa[i]/1000.0))
+            skrivar.writerow([
+                sample, kommando_status.avstand, kommando_status.x_aks, kommando_status.y_aks, kommando_status.z_aks,
+                kommando_status.error, kommando_status.power, kommando_status.uP, kommando_status.uI, kommando_status.uD
+            ])        
+        
+            f.flush
+        
+def oppsummering(logge_fil):
+    print("Kort oppsummering")
+    # Error-relaterte metrics
+    # RMSE - Root Mean Square Error
+    # MAE - Mean Absolute Error
+    # Max Absolute Error
+    # Time-in-Tolerance%
+    # IAE - Integral of Absolute Error
 
-    for i in range(0, len(a_y_raa)):
-        if a_y_raa[i] >= 32768:
-            kommando_status.a_y.append((float(a_y_raa[i])-65536.0)/1000.0)
-        else:
-            kommando_status.a_y.append(float(a_y_raa[i]/1000.0))
+    # PID metrics
+    # Average absolute contribution - % of control effort - Viser hvilket av PID leddene som kontributerer mest
+    # StdDev of uD - Derivative noise amplification - Stor std(uD) kan være et tegn på at den amplifiserer støy e.l.
+    # Mean absolute control effort - høy mean-power ved dårlig performance er et tegn på at bedre tuning behøves, evt. anti-windup
 
-    for i in range(0, len(a_z_raa)):
-        if a_z_raa[i] >= 32768:
-            kommando_status.a_z.append((float(a_z_raa[i])-65536.0)/1000.0)
-        else:
-            kommando_status.a_z.append(float(a_z_raa[i])/1000.0)
-
-    for i in range(0, len(kommando_status.a_z)):
-        kommando_status.aks_abs.append(np.sqrt(kommando_status.a_x[i]**2 + kommando_status.a_y[i]**2 + kommando_status.a_z[i]**2))
-    for i in range(0, len(a_z_raa)):
-        kommando_status.ayz_abs.append(np.sqrt(kommando_status.a_y[i]**2 + kommando_status.a_z[i]**2))
-
-    for i in range(0, len(kommando_status.a_x)):
-        kommando_status.stamp.append(np.arctan2(kommando_status.a_x[i], kommando_status.ayz_abs[i]) * 180 / np.pi)
-
-    for i in range(0, len(a_x)):
-        if a_z[i] == 0:
-            if i == 0:
-                kommando_status.rull.append(0)
-            else:
-                kommando_status.rull.append(rull[i-1])     #Unngaa deling paa null
-
-        else:
-            kommando_status.rull.append(np.arctan2(a_y[i], a_z[i]) * 180 / np.pi)
-
-  # Skal laga ei kontinuerleg aukande tidsliste som startar i null.
-    tid = []
-    Ts = 0.1  # Sampleintervall i sekund
-    tidsomloepnr = 0
-
-    for j in range(0, len(kommando_status.tid_raa)):
-        kommando_status.tid.append(kommando_status.tid_raa[j] + tidsomloepnr * 256)
-
-        if kommando_status.tid_raa[j] == 255: # Tidsreferansen er paa 8 bit og rullar rundt kvar 256. gong
-            tidsomloepnr = tidsomloepnr + 1
-
-    skyv = kommando_status.tid[0] # Vil at tidslista skal starta paa null.
-    print(skyv)
-    for k in range(0, len(kommando_status.tid)):
-        kommando_status.tid[k] = Ts * (kommando_status.tid[k] - skyv)
+    # Overshoot % - høy overshoot kan tyde på aggressiv tuning eller resonans
+    # Actuator saturation - hvis power ofte fører til at styrekortet spør om mer pådrag enn linmoten har tilgjengelig bør den tunes på en annen måte
 
 
- # Seks subplott med felles tidsakse.
+    dt = 0.01
+    error_liste=[]
+
+    uP_liste=[]
+    uI_liste=[]
+    uD_liste=[]
+    power_liste=[]
+    distanse_liste=[]
+
+    linmot_limit = 1000
+    TOL = 5.0
+
+    with open(logge_fil,"r") as fil:
+        header = fil.readline()
+        for line in fil:
+            parts = line.strip().split(",")
+
+            distanse = float(parts[1])
+            error = float(parts[5])
+            power = float(parts[6])
+            uP = float(parts[7])
+            uI = float(parts[8])
+            uD = float(parts[9])
+
+            distanse_liste.append(distanse)
+            error_liste.append(error)
+            power_liste.append(power)
+            uP_liste.append(uP)
+            uI_liste.append(uI)
+            uD_liste.append(uD)
+
+    n = len(error_liste)
+
+    # error-metrics
+    kommando_status.IAE = sum(abs(e) * dt for e in error_liste)
+    kommando_status.MAE  = sum(abs(e) for e in error_liste) / n
+    kommando_status.RMSE = (sum(e*e for e in error_liste) / n) ** 0.5
+    kommando_status.max_error = max(abs(e) for e in error_liste)
     
+    kommando_status.percent_in_tol = 100 * sum(1 for e in error_liste if abs(e) <= TOL) / n
+
+    # PID-metrics
+    avg_abs_uP = sum(abs(x) for x in uP_liste)/n
+    avg_abs_uI = sum(abs(x) for x in uI_liste)/n
+    avg_abs_uD = sum(abs(x) for x in uD_liste)/n
+
+    sum_abs_PID = avg_abs_uP + avg_abs_uI + avg_abs_uD
+    if sum_abs_PID == 0:
+        pct_uP = pct_uI = pct_uD = 0
+    else:
+        pct_uP = 100 * avg_abs_uP/sum_abs_PID
+        pct_uI = 100 * avg_abs_uI/sum_abs_PID
+        pct_uD = 100 * avg_abs_uD/sum_abs_PID
+
+    
+    # std(uD)
+    mean_uD = sum(uD_liste)/n
+    std_uD = (sum((x - mean_uD)**2 for x in uD_liste)/n)**0.5
+    # Total kontrolleffekt 
+    mean_abs_power = sum(abs(x) for x in power_liste)/n
+
+    # Ekstra relevante metrics
+    overshoot = max(error_liste)
+
+    # Overshoot relativt til gjennomsnittsdistanse - %
+    mean_distanse = sum(distanse_liste)/n
+    overshoot_pct = 100*(overshoot / mean_distanse) if mean_distanse != 0 else 0
+
+    # Actuator saturation
+    saturation_pct = 100 * sum(1 for p in power_liste if abs(p) >= linmot_limit) / n
 
 
-    print('Slutt i main')
+
+
+    print("IAE =",kommando_status.IAE)
+    print("MAE =",kommando_status.MAE)
+    print("RMSE =",kommando_status.RMSE)
+    print("max_error =",kommando_status.max_error)
+    print("Time in tolerance ±5mm = ", kommando_status.percent_in_tol,"%")
+
+    print("Gjennomsnittlig |uP|:",avg_abs_uP)
+    print("Gjennomsnittlig |uI|:",avg_abs_uI)
+    print("Gjennomsnittlig |uD|:",avg_abs_uD)
+    print("P/I/D ratio:",pct_uP,"%",pct_uI,"%",pct_uD,"%")
+    print("std(uD):",std_uD)
+    print("Gjennomsnittlig |power|:",mean_abs_power)
+
+    print("Overshoot abs:",overshoot)
+    print("Overshoot %:",overshoot_pct)
+    print("Linmot saturering:",saturation_pct)
+
+
+
+        
+
+
 
 if __name__ == "__main__":
 
-    thread2 = threading.Thread(target=main, daemon=True)
-    thread2.start()
+    #fileNamn = 'logg.txt'
+    #f = open(fileNamn, 'w')
+    #f.write("Tid | Avstand | X | Y | Z | Error | Power | uP | uI | uD\n")
+
+    fileNamn = 'csv_logg.csv'
+    f = open(fileNamn,"w",newline="")
+    skrivar = csv.writer(f)
+    skrivar.writerow([
+    "Tid", "Avstand", "X", "Y", "Z", "Error",
+    "Power", "uP", "uI", "uD"
+    ])
+
 
     thread1 = threading.Thread(target=raakode_gui_metoder.sensor_loop, daemon=True)
     thread1.start()
+
+    thread3 = threading.Thread(target=datakoe_handterer, daemon=True)
+    thread3.start()
+
+    thread2 = threading.Thread(target=seriekomm_egen, daemon=True)
+    thread2.start()
+
+
 
     applikasjon = raakode_gui_metoder.QApplication(raakode_gui_metoder.sys.argv)
     vindu = raakode_gui_metoder.MainWindow()
     vindu.show()
     applikasjon.exec()    
 
-    f, aks_sub = mpl.subplots(6, sharex=True)
-    aks_sub[0].plot(kommando_status.tid, kommando_status.a_x)
-    aks_sub[1].plot(kommando_status.tid, kommando_status.a_y)
-    aks_sub[2].plot(kommando_status.tid, kommando_status.a_z)
-    aks_sub[3].plot(kommando_status.tid, kommando_status.aks_abs)
-    aks_sub[4].plot(kommando_status.tid, kommando_status.stamp)
-    aks_sub[5].plot(kommando_status.tid, kommando_status.rull)
-    aks_sub[5].set_xlabel('Tid [sek]')
-    aks_sub[1].set_ylabel('Akselerasjon [g]')
-    aks_sub[4].set_ylabel('Vinkel [grader]')
-    aks_sub[0].set_title('a_x')
-    aks_sub[1].set_title('a_y')
-    aks_sub[2].set_title('a_z')
-    aks_sub[3].set_title('aks_abs - absolutt akselerasjon')
-    aks_sub[4].set_title('Stampvinkel (om Y-aksen)')
-    aks_sub[5].set_title('Rullvinkel (om X-aksen)')
-    aks_sub[0].grid()
-    aks_sub[1].grid()
-    aks_sub[2].grid()
-    aks_sub[3].grid()
-    aks_sub[4].grid()
-    aks_sub[5].grid()
+    f.close()
+    raakode_gui_metoder.serieport.close()
 
-    mpl.show()    
+    oppsummering(fileNamn)
 
- # Skriv ut listene for kontroll
-    print(kommando_status.tid_raa)
-    print(kommando_status.tid)
-    print(len(kommando_status.tid))
-    #print(kommando_status.a_x_raa)
-    #print(len(kommando_status.a_x_raa))
-    #print(kommando_status.a_y_raa)
-    #print(len(kommando_status.a_y_raa))
-    #print(kommando_status.a_z_raa)
-    #print(len(kommando_status.a_z_raa))
-    print(kommando_status.stamp)
-    print(len(kommando_status.a_x))
-    print(kommando_status.rull)
-    print(len(kommando_status.a_x))
 
-    #ani=FuncAnimation(fig, update, init_func=init, interval=50, blit=True)
-    #mpl.show()
+
+
+
