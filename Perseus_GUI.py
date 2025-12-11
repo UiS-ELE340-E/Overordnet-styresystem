@@ -123,7 +123,7 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.update_plot)
         self.timer.start()
 
-        # Setter opp numerisk display og knapper
+        # Setter opp numerisk display, skrivefelt og knapper
         Ref_modul.addWidget(QLabel("Referanse [cm]"))
         self.Ref_LCD = QLCDNumber()
         self.Ref_LCD.display(kommando_status.Ref_iv/10)
@@ -200,8 +200,6 @@ class MainWindow(QMainWindow):
     def start_kommando(self):
            
         kommando_status.start_event.set()
-        #kommando='k'
-        #status = 'k'
         RPID = (BE_til_LE(kommando_status.Ref_iv))+(BE_til_LE(kommando_status.Kp_iv))+(BE_til_LE(kommando_status.Ti_iv))+(BE_til_LE(kommando_status.Td_iv))
         print(RPID)
         send_RPID(RPID)        
@@ -222,14 +220,14 @@ class MainWindow(QMainWindow):
             kommando_status.stopp_teller = 1
             self.knapp_stopp.setText("Lukk program")
 
-            # Show summary window (reads csv_logg.csv)
+            # Viser oppsummeringsvindu som leser fra loggefilen
             self.summary_win = SecondWindow(self, csv_path="csv_logg.csv")
             self.summary_win.show()
         else:
             QApplication.quit()
             
 
-    def update_plot(self):
+    def update_plot(self): # Oppdaterer grafene i GUI, blir kalt av intern timer i GUI
         self.line.set_ydata(sensor_data["avstand"])
         self.line2.set_ydata(sensor_data["error"])
 
@@ -255,7 +253,7 @@ class MainWindow(QMainWindow):
         self.graf_error.draw()
         self.graf_PID.draw()
     
-    def update_LCD(self):
+    def update_LCD(self): # Sjekker om skrevne verdier er gyldige, deretter ppdaterer numerisk display og sender nye Ref og PID-verdier til linmot
         kommando_status.Ref_ny = float(self.Ref_txt.text())
         kommando_status.Kp_ny = float(self.Kp_txt.text())
         kommando_status.Ti_ny = float(self.Ti_txt.text())
@@ -302,9 +300,9 @@ class MainWindow(QMainWindow):
                 send_RPID(RPID)
         except ValueError:
             print("Vennligst skriv et tall innenfor 20 og 150 [cm] på referansen og tall mellom 0 og 50 for PID-parametrene.")
-#------------------------------------------------------------------
-# GUI oppsummering ---------We've had one, yes, but what about second GUI? ----------------------------------
 
+
+# GUI for  oppsummering ----------------We've had one, yes, but what about second GUI? ----------------------------------
 class SecondWindow(QMainWindow):
     def __init__(self, parent=None, csv_path="csv_logg.csv"):
         super().__init__(parent)
@@ -316,9 +314,10 @@ class SecondWindow(QMainWindow):
         self.oppsummering_group = QGroupBox("Ytelsessammendrag")
         layout = QFormLayout()
 
-        # compute metrics
+        # Regner ut oppsummeringsdata fra loggefil
         metrics = self._compute_metrics(self.csv_path)
 
+        # Kapper desimalene og legger verdiene inn i GUI som labels
         layout.addRow("IAE:", QLabel(f"{metrics['IAE']:.3f}"))
         layout.addRow("MAE:", QLabel(f"{metrics['MAE']:.3f}"))
         layout.addRow("RMSE:", QLabel(f"{metrics['RMSE']:.3f}"))
@@ -342,7 +341,7 @@ class SecondWindow(QMainWindow):
         self.setCentralWidget(container)
 
     def _compute_metrics(self, filename):
-        # defaults
+        # Setter opp verdiene som skal regnes ut
         metrics = {
             "IAE": 0.0, "MAE": 0.0, "RMSE": 0.0, "max_error": 0.0,
             "percent_in_tol": 0.0,
@@ -351,9 +350,9 @@ class SecondWindow(QMainWindow):
             "std_uD": 0.0, "mean_abs_power": 0.0,
             "overshoot": 0.0, "overshoot_pct": 0.0, "saturation_pct": 0.0
         }
-        try:
+        try: # Hadde problemer med verdier som ikke ble lagt inn ordentlig i loggefilen, dette er mest sannsynlig løst etter at framing_errors ble rettet opp i, men skader ikke å beholde
             with open(filename, "r", newline="") as f:
-                reader = csv.reader(f)
+                reader = csv.reader(f) # Åpner CSV-filen
                 header = next(reader, None)
                 error_l = []
                 uP_l = []
@@ -361,10 +360,10 @@ class SecondWindow(QMainWindow):
                 uD_l = []
                 power_l = []
                 distanse_l = []
-                for row in reader:
-                    if len(row) < 10:
+                for row in reader: # Leser gjennom hver linje i filen og legger verdiene til i respektive lister
+                    if len(row) < 10: # Hvis en linje skulle ha færre verdier enn alle 10 blir den skippet
                         continue
-                    # CSV format: "Tid", "Avstand", "X", "Y", "Z", "Error", "Power", "uP", "uI", "uD"
+                    # Format i CSV-fil: "Tid", "Avstand", "X", "Y", "Z", "Error", "Power", "uP", "uI", "uD"
                     try:
                         dist = float(row[1])
                         err = float(row[5])
@@ -385,6 +384,7 @@ class SecondWindow(QMainWindow):
             if n == 0:
                 return metrics
 
+            # Utregning av de forskjellige målepunktene, for en mer detaljert forklaring se den gamle funksjonen i datalogger.py linje 158++
             dt = 0.01
             metrics["IAE"] = sum(abs(e) * dt for e in error_l)
             metrics["MAE"] = sum(abs(e) for e in error_l) / n
@@ -413,7 +413,7 @@ class SecondWindow(QMainWindow):
             mean_distanse = sum(distanse_l)/n if n else 0.0
             metrics["overshoot_pct"] = 100*(metrics["overshoot"] / mean_distanse) if mean_distanse != 0 else 0.0
 
-            linmot_limit = 1000
+            linmot_limit = 1000 # Denne er teoretisk, fikk ikke tid til å finne den faktiske pådragsgrensen
             metrics["saturation_pct"] = 100 * sum(1 for p in power_l if abs(p) >= linmot_limit) / n
         except FileNotFoundError:
             # no file yet

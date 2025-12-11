@@ -1,16 +1,3 @@
-__author__ = 'Morten Tengesdal og Kristian Thorsen'
-# Dato:2016.08.05
-# Oppdatert til Python 3 av K. Thorsen
-# Med serieporttraad og med meldingskoe
-# Skriptet loggar akselerasjonsdata i X-, Y- og Z-retning i 16-bitsformat og med
-# tidsreferanse i 8-bitsformat.
-# Meldingsformat STX+(T+samplenr.(2 ASCII HEX-siffer)+X+data(4 ASCII Hex-siffer)
-#                                                     Y+data(4 ASCII Hex-siffer)
-#                                                     Z+data(4 ASCII Hex-siffer))*N+ETX
-# Raadata blir lagra til fil og skalerte data blir plotta.
-# Skriptet blir koeyrt saman med prosjektet aks_xyz_loggar_stm32f3_disc paa
-# kortet STM32F3Discovery
-
 import threading
 import queue
 import time
@@ -18,21 +5,14 @@ import numpy as np
 import serial
 import matplotlib.pyplot as mpl
 import csv
-#from matplotlib.animation import FuncAnimation
+
 
 # Importerer GUI oppsett
-import raakode_gui_metoder
+import Perseus_GUI
 import kommando_status
-#start_event = threading.Event()
-# --------------------------------------------------------------------------
-# Oppsett og Metodar for Liveplotting
-# --------------------------------------------------------------------------
-#fig, ax = mpl.subplots()
-#x_data = []
-#y_data = []
-#line, =ax.plot([],[],'b-')
 
-datakoe=queue.Queue(maxsize=3)  # Keep only last 3 frames; drop old ones if full
+
+datakoe=queue.Queue(maxsize=3)  # Kø for innkommende datarammer, begrenset til 3 rammer for å unngå minnelekkasje som gror
 
 
 def print_bytes(data): # Funksjon som printer de innkomende bytene, for hjelp under utvikling av programmet
@@ -40,26 +20,26 @@ def print_bytes(data): # Funksjon som printer de innkomende bytene, for hjelp un
 
 
 
-def fortegnhandtering(verdi): # Funksjon som sjekker fortegnet på 16bits signerte integere
+def fortegnhandtering(verdi): # Funksjon som behandler verdien til signerte 16bits integere
     if verdi & 0x8000:
         return verdi - 0x10000
     else:
         return verdi
 
 
-def seriekomm_egen():
+def seriekomm_egen(): # Funksjon som håndterer innkommende data fra serieporten og håndterer resynkronisering ved rammefeil
     frame_errors = 0
-    buffer = b""  # Accumulate bytes
+    buffer = b""  # Buffer for innkommende data
     
-    while not raakode_gui_metoder.stopp_trigger.is_set():
-        sp = getattr(raakode_gui_metoder, "serieport", None)
+    while not Perseus_GUI.stopp_trigger.is_set(): # Kjører til stoppknappen i GUI er trykket
+        sp = getattr(Perseus_GUI, "serieport", None)
         if sp is None or not getattr(sp, "is_open", False):
             time.sleep(0.05)
             continue
 
         try:
-            # Read whatever is available (non-blocking-ish)
-            chunk = sp.read(100)  # Read up to 100 bytes
+            # Leser inn en stor chunk med data av gangen, dette er mer robust enn å lese akkurat 21 bytes, men må behandles i et ekstra steg
+            chunk = sp.read(100)  
             if not chunk:
                 time.sleep(0.01)
                 continue
@@ -68,21 +48,21 @@ def seriekomm_egen():
             print("Serial read error:", e)
             break
 
-        # Search for complete frames (STX=0xFF ... ETX=0xF0)
+        # Første og siste melding er alltid 0xFF og 0xF0 respektivt, bruker dette til å finne rammen
         while len(buffer) >= 21:
             if buffer[0] == 0xFF and buffer[20] == 0xF0:
-                # Valid frame found
+                # Hvis rammen er gyldig blir den lagt i køen
                 datakoe.put(buffer[:21])
                 buffer = buffer[21:]
                 frame_errors = 0
             else:
-                # Bad frame; skip 1 byte and try again
+                # Hvis rammen er ugyldig hopper den over en byte, logger en rammefeil og prøver igjen
                 print(f"Frame error: expected 0xFF at start, got {buffer[0]:02X}")
                 buffer = buffer[1:]
                 frame_errors += 1
                 
                 if frame_errors > 20:
-                    # Too many errors; reset buffer and wait for resync
+                    # Ved for mange rammefeil blir bufferen tømt og det blir gjort et forøk på å resynkronisere
                     print("Excessive frame errors. Clearing buffer.")
                     buffer = b""
                     frame_errors = 0
@@ -90,52 +70,52 @@ def seriekomm_egen():
         time.sleep(0.001)  # Prevent busy-waiting
 
 
-def seriekomm_resynkroniserar():
-    sp = getattr(raakode_gui_metoder, "serieport", None)
-    if sp is None or not getattr(sp, "is_open", False):
-        raise RuntimeError("Serial port not open for resynchronization")
+# Funksjon for manuell resynkronisering ved rammefeil, ikke lengre i bruk etter innføring av bufferlesing
+# def seriekomm_resynkroniserar(): 
+#     sp = getattr(Perseus_GUI, "serieport", None)
+#     if sp is None or not getattr(sp, "is_open", False):
+#         raise RuntimeError("Serial port not open for resynchronization")
 
-    while True:
-        try:
-            bitsjekker = sp.read(1)
-        except (serial.SerialException, OSError, AttributeError) as e:
-            print("Serial read aborted during resync:", e)
-            raise
+#     while True:
+#         try:
+#             bitsjekker = sp.read(1)
+#         except (serial.SerialException, OSError, AttributeError) as e:
+#             print("Serial read aborted during resync:", e)
+#             raise
 
-        if bitsjekker == b'\xFF':
-            break
-    resterande_beskjed = sp.read(20)
-    ramme = (bitsjekker or b"") + (resterande_beskjed or b"")
-    if len(ramme) == 21 and ramme[-1] == 0xF0:
-        print('Jadda, fikk til resynkronisering!')
-        datakoe.put(ramme)
-        return ramme
-    else:
-        print('Tror vi prøver en gang til....')
-        return seriekomm_resynkroniserar()
+#         if bitsjekker == b'\xFF':
+#             break
+#     resterande_beskjed = sp.read(20)
+#     ramme = (bitsjekker or b"") + (resterande_beskjed or b"")
+#     if len(ramme) == 21 and ramme[-1] == 0xF0:
+#         print('Jadda, fikk til resynkronisering!')
+#         datakoe.put(ramme)
+#         return ramme
+#     else:
+#         print('Tror vi prøver en gang til....')
+#         return seriekomm_resynkroniserar()
+    
 
-def datakoe_handterer():
-    start_sjekk=True
-    while not raakode_gui_metoder.stopp_trigger.is_set():
+
+def datakoe_handterer(): # Funksjon som henter rådataen fra køen, håndterer konvertering og lagrer til fil
+    start_sjekk=True 
+    while not Perseus_GUI.stopp_trigger.is_set():
         datakoe_lokal = list(datakoe.get())
         #print_bytes(datakoe_lokal)
         if kommando_status.start_event.is_set():
             # Sjekker hvor mange skritt samplenr. inkrementeres med
-            if start_sjekk:
+            if start_sjekk: # Setter opp riktig samplenr. ved start av logging
                 sample=1
                 sample_skritt=0
 
                 start_sjekk=False       
-            elif datakoe_lokal[1]>sample_prev:
+            elif datakoe_lokal[1]>sample_prev: # Normal inkrementering av samplenr.
                 sample_skritt = datakoe_lokal[1]-sample_prev
-            elif datakoe_lokal[1]==0:
+            elif datakoe_lokal[1]==0: # Håndtering av rollover
                 sample_skritt=256-sample_prev
-            elif datakoe_lokal[1]<sample_prev:
+            elif datakoe_lokal[1]<sample_prev: # Håndtering av tapte rammer
                 sample_skritt=datakoe_lokal[1]+256-datakoe_lokal[1]
             sample=sample+sample_skritt
-            #print(sample)
-            #print(datakoe_lokal[1])
-            #print(sample_skritt)
 
             sample_prev=datakoe_lokal[1]
             datakoe_lokal[1]=sample
@@ -151,10 +131,10 @@ def datakoe_handterer():
             kommando_status.uP = (datakoe_lokal[15]<<8)|datakoe_lokal[14]
             kommando_status.uI = (datakoe_lokal[17]<<8)|datakoe_lokal[16]
             kommando_status.uD = (datakoe_lokal[19]<<8)|datakoe_lokal[18]
-            datakoe_lokal_hex =  " ".join(f"{b:02X}" for b in datakoe_lokal)
 
 
 
+            # Skriver til loggfil
             skrivar.writerow([
                 sample, kommando_status.avstand, kommando_status.x_aks, kommando_status.y_aks, kommando_status.z_aks,
                 kommando_status.error, kommando_status.power, kommando_status.uP, kommando_status.uI, kommando_status.uD
@@ -280,9 +260,6 @@ def datakoe_handterer():
 
 if __name__ == "__main__":
 
-    #fileNamn = 'logg.txt'
-    #f = open(fileNamn, 'w')
-    #f.write("Tid | Avstand | X | Y | Z | Error | Power | uP | uI | uD\n")
 
     fileNamn = 'csv_logg.csv'
     f = open(fileNamn,"w",newline="")
@@ -293,7 +270,7 @@ if __name__ == "__main__":
     ])
 
 
-    thread1 = threading.Thread(target=raakode_gui_metoder.sensor_loop, daemon=True)
+    thread1 = threading.Thread(target=Perseus_GUI.sensor_loop, daemon=True)
     thread1.start()
 
     thread3 = threading.Thread(target=datakoe_handterer, daemon=True)
@@ -304,13 +281,13 @@ if __name__ == "__main__":
 
 
 
-    applikasjon = raakode_gui_metoder.QApplication(raakode_gui_metoder.sys.argv)
-    vindu = raakode_gui_metoder.MainWindow()
+    applikasjon = Perseus_GUI.QApplication(Perseus_GUI.sys.argv)
+    vindu = Perseus_GUI.MainWindow()
     vindu.show()
     applikasjon.exec()    
 
     f.close()
-    raakode_gui_metoder.serieport.close()
+    Perseus_GUI.serieport.close()
 
 
 
