@@ -44,7 +44,7 @@ def seriekomm_egen(): # Funksjon som håndterer innkommende data fra serieporten
                 time.sleep(0.01)
                 continue
             buffer += chunk
-        except (serial.SerialException, OSError, AttributeError) as e:
+        except (serial.SerialException, OSError, AttributeError) as e: # Hvis en lesefeil oppstår spyttes det ut en melding og løkken avbrytes
             print("Serial read error:", e)
             break
 
@@ -57,17 +57,17 @@ def seriekomm_egen(): # Funksjon som håndterer innkommende data fra serieporten
                 frame_errors = 0
             else:
                 # Hvis rammen er ugyldig hopper den over en byte, logger en rammefeil og prøver igjen
-                print(f"Frame error: expected 0xFF at start, got {buffer[0]:02X}")
+                
                 buffer = buffer[1:]
                 frame_errors += 1
                 
                 if frame_errors > 20:
                     # Ved for mange rammefeil blir bufferen tømt og det blir gjort et forøk på å resynkronisere
-                    print("Excessive frame errors. Clearing buffer.")
+                    print("For mange rammefeil, prøver å tømme buffer og resynkronisere...")
                     buffer = b""
                     frame_errors = 0
 
-        time.sleep(0.001)  # Prevent busy-waiting
+        time.sleep(0.001)  # Sørger for at loopen ikke opptar 100% CPU
 
 
 # Funksjon for manuell resynkronisering ved rammefeil, ikke lengre i bruk etter innføring av bufferlesing

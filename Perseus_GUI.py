@@ -384,7 +384,21 @@ class SecondWindow(QMainWindow):
             if n == 0:
                 return metrics
 
-            # Utregning av de forskjellige målepunktene, for en mer detaljert forklaring se den gamle funksjonen i datalogger.py linje 158++
+
+                
+                # Error-relaterte metrics
+                # IAE - Integral of Absolute Error 
+                # RMSE - Root Mean Square Error 
+                # MAE - Mean Absolute Error 
+                # Max Absolute Error 
+                # Time-in-Tolerance (%) (her ±5mm)          
+                # PID metrics
+                # Average absolute contribution - % of control effort - Viser hvilket av PID leddene som kontributerer mest
+                # StdDev of uD - Derivative noise amplification - Stor std(uD) kan være et tegn på at den amplifiserer støy e.l.
+                # Mean absolute control effort - høy mean-power ved dårlig performance er et tegn på at bedre tuning behøves, evt. anti-w               
+                # Overshoot % - høy overshoot kan tyde på aggressiv tuning eller resonans
+                # Actuator saturation - hvis power ofte fører til at styrekortet spør om mer pådrag enn linmoten har tilgjengelig bør den tunes på en annen måte
+
             dt = 0.01
             metrics["IAE"] = sum(abs(e) * dt for e in error_l)
             metrics["MAE"] = sum(abs(e) for e in error_l) / n
@@ -413,7 +427,7 @@ class SecondWindow(QMainWindow):
             mean_distanse = sum(distanse_l)/n if n else 0.0
             metrics["overshoot_pct"] = 100*(metrics["overshoot"] / mean_distanse) if mean_distanse != 0 else 0.0
 
-            linmot_limit = 1000 # Denne er teoretisk, fikk ikke tid til å finne den faktiske pådragsgrensen
+            linmot_limit = 65535 # Pådragsgrenen for verdien som blir konvertert til linmot-frekvens
             metrics["saturation_pct"] = 100 * sum(1 for p in power_l if abs(p) >= linmot_limit) / n
         except FileNotFoundError:
             # no file yet
